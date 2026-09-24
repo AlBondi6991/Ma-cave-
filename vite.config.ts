@@ -10,7 +10,7 @@ const OCR_FILES: Record<string, string> = {
   "tesseract-core-lstm.wasm.js": "tesseract.js-core/tesseract-core-lstm.wasm.js",
   "tesseract-core-simd-lstm.wasm.js": "tesseract.js-core/tesseract-core-simd-lstm.wasm.js",
   "tesseract-core-relaxedsimd-lstm.wasm.js": "tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm.js",
-  "fra.traineddata.gz": "@tesseract.js-data/fra/4.0.0_best_int/fra.traineddata.gz",
+  "fra-traineddata.wasm": "@tesseract.js-data/fra/4.0.0_best_int/fra.traineddata.gz",
 };
 const source = (name: string) => readFileSync(join(import.meta.dirname, "node_modules", OCR_FILES[name]));
 
@@ -21,7 +21,7 @@ function ocrAssets(): Plugin {
       server.middlewares.use("/ocr/", (req, res, next) => {
         const name = req.url?.slice(1).split("?")[0] ?? "";
         if (!OCR_FILES[name]) return next();
-        res.setHeader("Content-Type", name.endsWith(".js") ? "text/javascript" : "application/octet-stream");
+        res.setHeader("Content-Type", name.endsWith(".js") ? "text/javascript" : "application/wasm");
         res.end(source(name));
       });
     },

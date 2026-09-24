@@ -29,6 +29,10 @@ MIS EN BOUTEILLE AU CHÂTEAU  75 cl  13,5% vol`;
     expect(f.color).toBe("effervescent");
   });
 
+  it("recolle un nom de domaine coupé après une particule", () => {
+    expect(parseLabelText("DOMAINE DE LA\nJANASSE\n2019\nCHÂTEAUNEUF-DU-PAPE", 2026).producer).toBe("Domaine De La Janasse");
+  });
+
   it("ignore un millésime dans le futur et reconnaît le magnum", () => {
     const f = parseLabelText("Domaine X  Morgon  2031  2019  1,5 L", 2026);
     expect(f.vintage).toBe(2019);

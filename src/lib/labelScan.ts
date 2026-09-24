@@ -106,24 +106,41 @@ export function sanitize(raw: unknown): LabelFields {
 }
 
 /** Lecture hors-ligne : OCR sur l'appareil puis extraction par règles. Moins précise que Claude. */
-export async function readWithOcr(image: Blob, onProgress?: (ratio: number) => void): Promise<LabelFields> {
+/** Lit le texte de la photo sur l'appareil (OCR Tesseract embarqué, français). */
+export async function ocrText(image: Blob, onProgress?: (ratio: number) => void): Promise<string> {
   const { createWorker } = await import("tesseract.js");
   const base = new URL("ocr/", document.baseURI).href;
   const worker = await createWorker("fra", 1 /* LSTM seul */, {
     workerPath: `${base}worker.min.js`,
     corePath: base,
-    langPath: base,
+    // Tesseract demande « <langPath>/fra.traineddata.gz » ; la requête pointe vers un nom de fichier
+    // que tout hébergeur sert (claude.ai refuse les .gz), le reste passe en paramètre ignoré.
+    langPath: `${base}fra-traineddata.wasm?f=`,
+    cacheMethod: "none",
     workerBlobURL: false,
     logger: (m: { status: string; progress: number }) => m.status === "recognizing text" && onProgress?.(m.progress),
   });
   try {
     const { data } = await worker.recognize(image);
-    const fields = parseLabelText(data.text);
-    if (Object.values(fields).every((v) => v == null)) throw new NotALabelError("Aucun texte exploitable sur la photo. Essaie plus près, bien à plat et éclairé.");
-    return fields;
+    return data.text;
   } finally {
     await worker.terminate();
   }
+}
+
+/** Fait interpréter par Claude un texte d'étiquette lu par OCR (bruité, coupé), quand la vue ne permet pas d'envoyer l'image. */
+export async function structureWithClaude(sample: Sample, text: string, signal?: AbortSignal): Promise<LabelFields> {
+  const raw = await sample.json<Record<string, unknown>>(
+    `${prompt(new Date().getFullYear()).replace("Voici la photo d'une étiquette de vin. Lis-la", "Voici le texte lu par OCR sur la photo d'une étiquette de vin (il peut contenir des fautes, des coupures et du bruit). Interprète-le")}
+
+Texte OCR :
+"""
+${text.slice(0, 4000)}
+"""`,
+    { modelTier: "default", signal },
+  );
+  if (raw && raw.isWineLabel === false) throw new NotALabelError("Le texte lu ne ressemble pas à une étiquette de vin. Reprends la photo en cadrant l'étiquette.");
+  return sanitize(raw);
 }
 
 const PRODUCER = /^(chateau|ch\.|domaine|dom\.|clos|mas|maison|cave|cellier|vignobles?|champagne)\b/;
@@ -158,7 +175,8 @@ export function parseLabelText(raw: string, year = new Date().getFullYear()): La
 
   const at = lines.findIndex((l) => PRODUCER.test(normalize(l)) && normalize(l) !== "champagne");
   // Un nom coupé en fin de ligne (« CHÂTEAU LYNCH- » / « BAGES ») se poursuit sur la suivante.
-  const producerLine = at < 0 ? undefined : lines[at].endsWith("-") && lines[at + 1] ? lines[at] + lines[at + 1] : lines[at];
+  const cut = at >= 0 && lines[at + 1] && (lines[at].endsWith("-") || /\b(de|du|des|de la|le|la|d')$/.test(normalize(lines[at])) || /\bd['’]$/i.test(lines[at]));
+  const producerLine = at < 0 ? undefined : cut ? `${lines[at]}${lines[at].endsWith("-") || /['’]$/.test(lines[at]) ? "" : " "}${lines[at + 1]}` : lines[at];
   const producer = producerLine ? titleCase(producerLine).slice(0, 80) : undefined;
 
   const grapes = GRAPES.filter((g) => text.includes(` ${normalize(g)} `));

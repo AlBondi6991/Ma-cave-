@@ -1,14 +1,33 @@
 import { Camera, LoaderCircle, ScanLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { canSendImages, getSample, sampleErrorMessage } from "../lib/claude";
-import { NotALabelError, prepareImage, readWithClaude, readWithOcr, type LabelFields } from "../lib/labelScan";
+import { NotALabelError, ocrText, parseLabelText, prepareImage, readWithClaude, structureWithClaude, type LabelFields } from "../lib/labelScan";
 import { plural } from "../lib/format";
 import { Card } from "./ui";
 
-type Status = { kind: "idle" } | { kind: "reading"; progress?: number } | { kind: "done"; filled: number } | { kind: "error"; text: string };
+type Status =
+  | { kind: "idle" }
+  | { kind: "reading"; label: string; progress?: number }
+  | { kind: "done"; filled: number; note?: string }
+  | { kind: "error"; text: string; detail?: string };
+
+/** photo : Claude voit l'image ; texte : OCR sur l'appareil puis Claude interprète ; local : OCR seul. */
+type Mode = "photo" | "texte" | "local";
+
+const DESCRIPTION: Record<Mode, string> = {
+  photo: "Claude lit la photo et remplit la fiche, garde estimée comprise. Vérifie avant d'enregistrer.",
+  texte: "Ton téléphone lit le texte de l'étiquette, puis Claude remplit la fiche, garde estimée comprise. Vérifie avant d'enregistrer.",
+  local: "Lecture du texte sur ton appareil : domaine, millésime, appellation. Vérifie la fiche ensuite.",
+};
+
+async function detectMode(): Promise<Mode> {
+  const sample = await getSample();
+  if (!sample) return "local";
+  return (await canSendImages()) ? "photo" : "texte";
+}
 
 export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields) => number }) {
-  const [mode, setMode] = useState<"claude" | "ocr">();
+  const [mode, setMode] = useState<Mode>();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [preview, setPreview] = useState<string>();
   const [dragging, setDragging] = useState(false);
@@ -17,7 +36,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   const scanRef = useRef<(f: Blob) => void>(null);
 
   useEffect(() => {
-    canSendImages().then((ok) => setMode(ok ? "claude" : "ocr"));
+    detectMode().then(setMode);
     return () => ctl.current?.abort();
   }, []);
 
@@ -38,27 +57,54 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   async function scan(file: Blob) {
     if (reading) return;
     setPreview(URL.createObjectURL(file));
-    setStatus({ kind: "reading" });
-    const useClaude = await canSendImages();
+    setStatus({ kind: "reading", label: "Lecture…" });
+    const current = await detectMode();
+    setMode(current);
+    const sample = await getSample();
+    ctl.current = new AbortController();
+    const signal = ctl.current.signal;
+    let step = "préparation de la photo";
+    let note: string | undefined;
     try {
       const image = await prepareImage(file);
-      const sample = useClaude ? await getSample() : null;
       let fields: LabelFields;
-      if (sample) {
-        ctl.current = new AbortController();
-        fields = await readWithClaude(sample, image, ctl.current.signal);
+      if (current === "photo" && sample) {
+        step = "Claude";
+        setStatus({ kind: "reading", label: "Claude lit l'étiquette…" });
+        fields = await readWithClaude(sample, image, signal);
       } else {
-        fields = await readWithOcr(image, (p) => setStatus({ kind: "reading", progress: p }));
+        step = "lecture du texte";
+        const text = await ocrText(image, (p) => setStatus({ kind: "reading", label: "Lecture du texte…", progress: p }));
+        if (text.replace(/[^\p{L}\d]/gu, "").length < 4)
+          throw new NotALabelError("Aucun texte lu sur la photo. Cadre l'étiquette de près, bien à plat et sans reflet.");
+        if (sample) {
+          step = "Claude";
+          setStatus({ kind: "reading", label: "Claude remplit la fiche…" });
+          fields = await structureWithClaude(sample, text, signal).catch((e) => {
+            if ((e as { code?: string })?.code === "cancelled" || e instanceof NotALabelError) throw e;
+            note = `${sampleErrorMessage(e)} Fiche remplie avec la seule lecture du téléphone.`;
+            return parseLabelText(text);
+          });
+        } else {
+          fields = parseLabelText(text);
+        }
       }
       const filled = onRead(fields);
-      setStatus(filled ? { kind: "done", filled } : { kind: "error", text: "Rien de lisible sur cette photo. Essaie plus près, bien éclairé." });
+      setStatus(
+        filled
+          ? { kind: "done", filled, note }
+          : { kind: "error", text: "L'étiquette a été lue mais je n'y ai reconnu ni domaine, ni millésime, ni appellation. Remplis la fiche à la main." },
+      );
     } catch (e) {
-      if ((e as { code?: string })?.code === "cancelled") return;
+      const code = (e as { code?: string })?.code;
+      if (code === "cancelled") return;
       const text =
         e instanceof NotALabelError ? e.message
-        : useClaude ? sampleErrorMessage(e)
-        : "La lecture a échoué. Réessaie avec une photo plus nette.";
-      setStatus({ kind: "error", text });
+        : step === "Claude" ? sampleErrorMessage(e)
+        : step === "lecture du texte" ? "La lecture du texte n'a pas pu démarrer sur cet appareil."
+        : "Cette photo n'a pas pu être ouverte.";
+      const detail = code ?? (e instanceof Error ? e.message : String(e));
+      setStatus({ kind: "error", text, detail: e instanceof NotALabelError ? undefined : detail.slice(0, 160) });
     }
   }
   scanRef.current = scan;
@@ -92,9 +138,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
         <div className="min-w-0 flex-1">
           <h2 className="font-serif text-lg font-semibold leading-tight">Scanner l'étiquette</h2>
           <p className="mt-0.5 text-sm text-stone-500">
-            {mode === "ocr"
-              ? "Lecture du texte sur ton appareil : domaine, millésime, appellation. Vérifie la fiche ensuite."
-              : "Claude lit la photo et remplit la fiche, garde estimée comprise. Vérifie avant d'enregistrer."}
+            {mode ? DESCRIPTION[mode] : "\u00a0"}
           </p>
           {/* Un vrai <input> sous le bouton : un clic déclenché par script est bloqué dans certaines vues intégrées. */}
           <label
@@ -103,7 +147,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
             }`}
           >
             {reading ? <LoaderCircle size={16} className="animate-spin" /> : <Camera size={16} />}
-            {reading ? (status.progress ? `Lecture… ${Math.round(status.progress * 100)} %` : "Lecture…") : "Photo de l'étiquette"}
+            {reading ? `${status.label}${status.progress ? ` ${Math.round(status.progress * 100)} %` : ""}` : "Photo de l'étiquette"}
             <input
               type="file"
               accept="image/*"
@@ -124,9 +168,17 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
             className="mt-2 min-h-9 rounded-lg border border-dashed border-stone-300 px-3 py-2 text-xs text-stone-500 caret-transparent outline-none empty:before:content-[attr(data-placeholder)] focus:border-wine-500 focus:bg-wine-50"
           />
           {status.kind === "done" && (
-            <p className="mt-2 text-sm text-emerald-700">{plural(status.filled, "champ rempli", "champs remplis")}, à vérifier ci-dessous.</p>
+            <p className="mt-2 text-sm text-emerald-700">
+              {plural(status.filled, "champ rempli", "champs remplis")}, à vérifier ci-dessous.
+              {status.note && <span className="mt-0.5 block text-xs text-stone-500">{status.note}</span>}
+            </p>
           )}
-          {status.kind === "error" && <p className="mt-2 text-sm text-red-700">{status.text}</p>}
+          {status.kind === "error" && (
+            <p className="mt-2 text-sm text-red-700">
+              {status.text}
+              {status.detail && <span className="mt-0.5 block text-xs text-stone-400">Détail : {status.detail}</span>}
+            </p>
+          )}
         </div>
       </div>
     </Card>
