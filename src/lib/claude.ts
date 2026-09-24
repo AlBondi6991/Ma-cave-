@@ -1,3 +1,4 @@
+import { getApiKey } from "./claudeApiKey";
 /**
  * Accès à Claude quand l'app est ouverte comme page claude.ai (capacité « sample »).
  * Hors de claude.ai, `getSample()` renvoie null et l'app se rabat sur ses fonctions locales.
@@ -45,9 +46,16 @@ export async function saveFile(filename: string, data: string, type: string): Pr
 
 let pending: Promise<Sample | null> | undefined;
 
-export function getSample(): Promise<Sample | null> {
-  pending ??= window.claude ? window.claude.use("sample").catch(() => null) : Promise.resolve(null);
-  return pending;
+/** Claude via claude.ai quand l'app y est ouverte, sinon via la clé API enregistrée dans les réglages. */
+export async function getSample(): Promise<Sample | null> {
+  if (window.claude) {
+    pending ??= window.claude.use("sample").catch(() => null);
+    return pending;
+  }
+  const key = getApiKey();
+  if (!key) return null;
+  const { apiSample } = await import("./claudeApi");
+  return apiSample(key);
 }
 
 export async function canSendImages(): Promise<boolean> {
@@ -60,6 +68,12 @@ export async function canSendImages(): Promise<boolean> {
 export function sampleErrorMessage(e: unknown): string {
   const code = (e as SampleError | undefined)?.code;
   switch (code) {
+    case "bad_key":
+      return "Ta clé API Claude est refusée. Vérifie-la dans les réglages.";
+    case "offline":
+      return "Pas de connexion internet : Claude est injoignable.";
+    case "bad_request":
+      return "Claude a refusé la demande (crédit API épuisé ?).";
     case "not_granted":
       return "Tu n'as pas autorisé la page à interroger Claude.";
     case "rate_limited":

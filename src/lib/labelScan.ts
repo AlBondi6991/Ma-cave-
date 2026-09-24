@@ -34,6 +34,40 @@ export async function prepareImage(file: Blob, maxSide = 1600): Promise<Blob> {
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b ?? file), "image/jpeg", 0.85));
 }
 
+/** Image pour l'OCR : plus grande, en niveaux de gris et contraste étiré (étiquettes ternes, photos de loin). */
+export async function prepareForOcr(file: Blob, maxSide = 2400): Promise<Blob> {
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) return file;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    const g = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    d[i] = g;
+    hist[g]++;
+  }
+  // bornes aux 1er et 99e centiles pour ignorer reflets et ombres
+  const total = d.length / 4;
+  let lo = 0, hi = 255, acc = 0;
+  for (; lo < 255 && (acc += hist[lo]) < total * 0.01; lo++);
+  acc = 0;
+  for (; hi > 0 && (acc += hist[hi]) < total * 0.01; hi--);
+  const range = Math.max(1, hi - lo);
+  for (let i = 0; i < d.length; i += 4) {
+    const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / range));
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return new Promise((resolve) => canvas.toBlob((b) => resolve(b ?? file), "image/jpeg", 0.92));
+}
+
 const COLOR_VALUES = COLORS.map((c) => c.value);
 
 function prompt(year: number) {
@@ -171,7 +205,9 @@ export function parseLabelText(raw: string, year = new Date().getFullYear()): La
 
   const vintage = [...text.matchAll(/\b(19[4-9]\d|20[0-9]\d)\b/g)].map((m) => Number(m[1])).find((y) => y <= year);
 
-  const appellation = APPELLATIONS.filter((a) => text.includes(` ${normalize(a.name)} `)).sort((a, b) => b.name.length - a.name.length)[0];
+  const appellation =
+    APPELLATIONS.filter((a) => text.includes(` ${normalize(a.name)} `)).sort((a, b) => b.name.length - a.name.length)[0] ??
+    fuzzyAppellation(text);
 
   const at = lines.findIndex((l) => PRODUCER.test(normalize(l)) && normalize(l) !== "champagne");
   // Un nom coupé en fin de ligne (« CHÂTEAU LYNCH- » / « BAGES ») se poursuit sur la suivante.
@@ -196,4 +232,37 @@ export function parseLabelText(raw: string, year = new Date().getFullYear()): La
     grapes: grapes.length ? grapes : undefined,
     format: detectFormat(text),
   };
+}
+
+function levenshtein(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length];
+}
+
+/** Appellation reconnue malgré les fautes d'OCR (« Chateauneuf du Papc », « Chdteauneuf-du-Pape »). */
+function fuzzyAppellation(text: string) {
+  const tokens = text.split(" ").filter(Boolean);
+  let best: { a: (typeof APPELLATIONS)[number]; ratio: number } | undefined;
+  for (const a of APPELLATIONS) {
+    const name = normalize(a.name);
+    if (name.length < 6) continue;
+    const k = name.split(" ").length;
+    for (let i = 0; i + k <= tokens.length; i++) {
+      const candidate = tokens.slice(i, i + k).join(" ");
+      if (Math.abs(candidate.length - name.length) > 3) continue;
+      const ratio = levenshtein(candidate, name) / name.length;
+      if (ratio <= 0.25 && (!best || ratio < best.ratio || (ratio === best.ratio && name.length > normalize(best.a.name).length)))
+        best = { a, ratio };
+    }
+  }
+  return best?.a;
 }

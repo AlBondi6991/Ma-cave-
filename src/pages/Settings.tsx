@@ -1,12 +1,13 @@
-import { Download, RotateCcw, Smartphone, Sparkles, Upload } from "lucide-react";
+import { Download, KeyRound, RotateCcw, Smartphone, Sparkles, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ask } from "../components/Confirm";
-import { Button, Card, PageTitle } from "../components/ui";
+import { Button, Card, PageTitle, inputClass } from "../components/ui";
 import { emptyState, parseBackup, today } from "../lib/cellar";
 import { demoState } from "../lib/demo";
 import { plural } from "../lib/format";
-import { saveFile } from "../lib/claude";
+import { getSample, sampleErrorMessage, saveFile } from "../lib/claude";
+import { getApiKey, setApiKey } from "../lib/claudeApiKey";
 import { setState, useCellar } from "../lib/store";
 import { isEmbedded, isIos, isStandalone, useInstallPrompt } from "../pwa";
 
@@ -38,6 +39,7 @@ export default function SettingsPage() {
       <PageTitle title="Réglages" />
 
       <InstallCard />
+      {!isEmbedded() && <ClaudeKeyCard />}
 
       <Card>
         <h2 className="font-serif text-lg font-semibold">Sauvegarde</h2>
@@ -130,6 +132,69 @@ function InstallCard() {
     <Card>
       <h2 className="font-serif text-lg font-semibold">Installer l'app</h2>
       {body}
+    </Card>
+  );
+}
+
+function ClaudeKeyCard() {
+  const [saved, setSaved] = useState(() => !!getApiKey());
+  const [draft, setDraft] = useState("");
+  const [test, setTest] = useState<{ ok: boolean; text: string } | "running">();
+
+  async function runTest() {
+    setTest("running");
+    try {
+      const sample = await getSample();
+      const r = await sample!.json<{ ok?: boolean }>('Réponds uniquement par ce JSON : {"ok": true}');
+      setTest(r?.ok ? { ok: true, text: "Ça marche : Claude lira tes étiquettes et proposera ses accords." } : { ok: false, text: "Réponse inattendue, réessaie." });
+    } catch (e) {
+      setTest({ ok: false, text: sampleErrorMessage(e) });
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="flex items-center gap-2 font-serif text-lg font-semibold"><KeyRound size={18} className="text-wine-600" /> Claude dans l'app</h2>
+      <p className="mt-1 text-sm text-stone-600">
+        Avec ta clé API Claude, l'app fait lire l'étiquette par Claude (domaine, cuvée, appellation, cépages et garde estimée)
+        et active « Demander à Claude » dans les accords. Compte environ 2 à 5 centimes par étiquette, facturés sur ton compte API.
+      </p>
+      {saved ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button onClick={runTest} disabled={test === "running"}>{test === "running" ? "Test…" : "Tester"}</Button>
+          <Button variant="danger" onClick={() => { setApiKey(null); setSaved(false); setTest(undefined); }}>Retirer la clé</Button>
+        </div>
+      ) : (
+        <form
+          className="mt-3 flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!draft.trim()) return;
+            setApiKey(draft);
+            setDraft("");
+            setSaved(true);
+            runTest();
+          }}
+        >
+          <input
+            id="claude-key"
+            className={`${inputClass} min-w-0 flex-1 basis-56`}
+            type="password"
+            autoComplete="off"
+            placeholder="sk-ant-…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button type="submit" disabled={!draft.trim()}>Enregistrer</Button>
+        </form>
+      )}
+      {test && test !== "running" && (
+        <p className={`mt-3 rounded-lg px-3 py-2 text-sm ring-1 ${test.ok ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-red-50 text-red-700 ring-red-200"}`}>{test.text}</p>
+      )}
+      <p className="mt-3 text-xs text-stone-500">
+        Crée une clé sur console.anthropic.com (rubrique API Keys) et ajoute un peu de crédit. La clé reste sur ce téléphone,
+        n'est envoyée qu'à Claude et ne figure pas dans tes exports.
+      </p>
     </Card>
   );
 }

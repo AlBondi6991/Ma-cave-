@@ -1,15 +1,15 @@
 import { Camera, LoaderCircle, ScanLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { canSendImages, getSample, sampleErrorMessage } from "../lib/claude";
-import { NotALabelError, ocrText, parseLabelText, prepareImage, readWithClaude, structureWithClaude, type LabelFields } from "../lib/labelScan";
+import { NotALabelError, ocrText, parseLabelText, prepareForOcr, prepareImage, readWithClaude, structureWithClaude, type LabelFields } from "../lib/labelScan";
 import { plural } from "../lib/format";
 import { Card } from "./ui";
 
 type Status =
   | { kind: "idle" }
   | { kind: "reading"; label: string; progress?: number }
-  | { kind: "done"; filled: number; note?: string }
-  | { kind: "error"; text: string; detail?: string };
+  | { kind: "done"; filled: number; note?: string; ocr?: string }
+  | { kind: "error"; text: string; detail?: string; ocr?: string };
 
 /** photo : Claude voit l'image ; texte : OCR sur l'appareil puis Claude interprète ; local : OCR seul. */
 type Mode = "photo" | "texte" | "local";
@@ -17,7 +17,8 @@ type Mode = "photo" | "texte" | "local";
 const DESCRIPTION: Record<Mode, string> = {
   photo: "Claude lit la photo et remplit la fiche, garde estimée comprise. Vérifie avant d'enregistrer.",
   texte: "Ton téléphone lit le texte de l'étiquette, puis Claude remplit la fiche, garde estimée comprise. Vérifie avant d'enregistrer.",
-  local: "Lecture du texte sur ton appareil : domaine, millésime, appellation. Vérifie la fiche ensuite.",
+  local:
+    "Lecture du texte sur ton appareil : domaine, millésime, appellation. Photographie l'étiquette de près. Pour une lecture complète par Claude, ajoute ta clé dans les réglages.",
 };
 
 async function detectMode(): Promise<Mode> {
@@ -66,25 +67,27 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
     const signal = ctl.current.signal;
     let step = "préparation de la photo";
     let note: string | undefined;
+    let text: string | undefined;
     try {
-      const image = await prepareImage(file);
       let fields: LabelFields;
       if (current === "photo" && sample) {
+        const image = await prepareImage(file);
         step = "Claude";
         setStatus({ kind: "reading", label: "Claude lit l'étiquette…" });
         fields = await readWithClaude(sample, image, signal);
       } else {
         step = "lecture du texte";
-        const text = await ocrText(image, (p) => setStatus({ kind: "reading", label: "Lecture du texte…", progress: p }));
+        text = await ocrText(await prepareForOcr(file), (p) => setStatus({ kind: "reading", label: "Lecture du texte…", progress: p }));
         if (text.replace(/[^\p{L}\d]/gu, "").length < 4)
           throw new NotALabelError("Aucun texte lu sur la photo. Cadre l'étiquette de près, bien à plat et sans reflet.");
         if (sample) {
           step = "Claude";
           setStatus({ kind: "reading", label: "Claude remplit la fiche…" });
-          fields = await structureWithClaude(sample, text, signal).catch((e) => {
+          const read = text;
+          fields = await structureWithClaude(sample, read, signal).catch((e) => {
             if ((e as { code?: string })?.code === "cancelled" || e instanceof NotALabelError) throw e;
             note = `${sampleErrorMessage(e)} Fiche remplie avec la seule lecture du téléphone.`;
-            return parseLabelText(text);
+            return parseLabelText(read);
           });
         } else {
           fields = parseLabelText(text);
@@ -93,19 +96,23 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
       const filled = onRead(fields);
       setStatus(
         filled
-          ? { kind: "done", filled, note }
-          : { kind: "error", text: "L'étiquette a été lue mais je n'y ai reconnu ni domaine, ni millésime, ni appellation. Remplis la fiche à la main." },
+          ? { kind: "done", filled, note, ocr: text }
+          : {
+              kind: "error",
+              text: "Je n'ai reconnu ni domaine, ni millésime, ni appellation. Reprends la photo plus près de l'étiquette, ou remplis la fiche à la main.",
+              ocr: text,
+            },
       );
     } catch (e) {
       const code = (e as { code?: string })?.code;
       if (code === "cancelled") return;
-      const text =
+      const message =
         e instanceof NotALabelError ? e.message
         : step === "Claude" ? sampleErrorMessage(e)
         : step === "lecture du texte" ? "La lecture du texte n'a pas pu démarrer sur cet appareil."
         : "Cette photo n'a pas pu être ouverte.";
       const detail = code ?? (e instanceof Error ? e.message : String(e));
-      setStatus({ kind: "error", text, detail: e instanceof NotALabelError ? undefined : detail.slice(0, 160) });
+      setStatus({ kind: "error", text: message, detail: e instanceof NotALabelError ? undefined : detail.slice(0, 160), ocr: text });
     }
   }
   scanRef.current = scan;
@@ -173,6 +180,12 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
               aria-label="Photo de l'étiquette"
             />
           </label>
+          {(status.kind === "done" || status.kind === "error") && status.ocr?.trim() && (
+            <details className="mt-2 text-xs text-stone-500">
+              <summary className="cursor-pointer">Texte lu sur la photo</summary>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-stone-50 p-2 font-sans">{status.ocr.trim()}</pre>
+            </details>
+          )}
           {blocked && (
             <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
               L'app Claude empêche cette page d'ouvrir l'appareil photo. Ouvre Ma Cave dans ton navigateur (Chrome, Safari) :
