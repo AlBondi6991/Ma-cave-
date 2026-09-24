@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  --color-wine-50: #fbf3f4;
+  --color-wine-100: #f5e1e5;
+  --color-wine-200: #e9bcc6;
+  --color-wine-500: #a8324f;
+  --color-wine-600: #8e1b36;
+  --color-wine-700: #74152c;
+  --color-wine-800: #5b1a2b;
+  --color-wine-900: #3d0f1c;
+  --color-cream: #faf6f0;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+html,
+body {
+  background: var(--color-cream);
+  color: var(--color-stone-900);
+  -webkit-tap-highlight-color: transparent;
+}
+
+dialog::backdrop {
+  background: rgb(28 25 23 / 0.45);
+}
+
+input,
+select,
+textarea {
+  font-size: 16px; /* évite le zoom automatique sur iOS */
+}
