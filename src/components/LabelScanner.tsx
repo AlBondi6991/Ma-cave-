@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { canSendImages, getSample, sampleErrorMessage } from "../lib/claude";
 import { NotALabelError, ocrText, parseLabelText, prepareForOcr, prepareImage, readWithClaude, structureWithClaude, type LabelFields } from "../lib/labelScan";
 import { plural } from "../lib/format";
+import CropDialog from "./CropDialog";
 import { Card } from "./ui";
 
 type Status =
@@ -33,6 +34,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   const [preview, setPreview] = useState<string>();
   const [dragging, setDragging] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [cropping, setCropping] = useState<Blob>();
   const ctl = useRef<AbortController>(null);
   const reading = status.kind === "reading";
   const scanRef = useRef<(f: Blob) => void>(null);
@@ -59,9 +61,15 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   async function scan(file: Blob) {
     if (reading) return;
     setPreview(URL.createObjectURL(file));
-    setStatus({ kind: "reading", label: "Lecture…" });
     const current = await detectMode();
     setMode(current);
+    // Lecture sur l'appareil : on fait d'abord cadrer l'étiquette, l'OCR y gagne énormément.
+    if (current === "photo") read(file, current);
+    else setCropping(file);
+  }
+
+  async function read(file: Blob, current: Mode) {
+    setStatus({ kind: "reading", label: "Lecture…" });
     const sample = await getSample();
     ctl.current = new AbortController();
     const signal = ctl.current.signal;
@@ -206,6 +214,16 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
           )}
         </div>
       </div>
+      {cropping && (
+        <CropDialog
+          file={cropping}
+          onDone={(area) => {
+            setCropping(undefined);
+            if (area) read(area, mode ?? "local");
+            else setStatus({ kind: "idle" });
+          }}
+        />
+      )}
     </Card>
   );
 }

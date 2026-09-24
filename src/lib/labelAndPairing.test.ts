@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addWine, emptyState, type WineInput } from "./cellar";
-import { parseLabelText, sanitize } from "./labelScan";
+import { mergeOcr, parseLabelText, sanitize } from "./labelScan";
 import { dishById, dishesForWine, matchDishes, suggestWines } from "./pairing";
 
 describe("lecture d'étiquette (OCR)", () => {
@@ -30,7 +30,12 @@ MIS EN BOUTEILLE AU CHÂTEAU  75 cl  13,5% vol`;
   });
 
   it("recolle un nom de domaine coupé après une particule", () => {
-    expect(parseLabelText("DOMAINE DE LA\nJANASSE\n2019\nCHÂTEAUNEUF-DU-PAPE", 2026).producer).toBe("Domaine De La Janasse");
+    expect(parseLabelText("DOMAINE DE LA\nJANASSE\n2019\nCHÂTEAUNEUF-DU-PAPE", 2026).producer).toBe("Domaine de la Janasse");
+  });
+
+  it("recolle un nom de domaine réparti sur deux lignes, sans avaler l'appellation", () => {
+    expect(parseLabelText("DOMAINE DU VIEUX\nTÉLÉGRAPHE\nLa Crau\nCHÂTEAUNEUF-DU-PAPE\n2017", 2026).producer).toBe("Domaine du Vieux Télégraphe");
+    expect(parseLabelText("DOMAINE DUPONT\nMORGON\n2019", 2026).producer).toBe("Domaine Dupont");
   });
 
   it("reconnaît une appellation mal lue par l'OCR", () => {
@@ -44,6 +49,10 @@ MIS EN BOUTEILLE AU CHÂTEAU  75 cl  13,5% vol`;
     const f = parseLabelText("Domaine X  Morgon  2031  2019  1,5 L", 2026);
     expect(f.vintage).toBe(2019);
     expect(f.format).toBe("Magnum 1,5 L");
+  });
+
+  it("fusionne deux lectures OCR sans doublon", () => {
+    expect(mergeOcr("DOMAINE X\n2019", "Domaine X\nMORGON\n2019\nMORGON")).toBe("DOMAINE X\n2019\nMORGON");
   });
 
   it("nettoie une réponse de Claude incohérente", () => {

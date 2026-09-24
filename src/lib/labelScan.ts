@@ -35,10 +35,12 @@ export async function prepareImage(file: Blob, maxSide = 1600): Promise<Blob> {
 }
 
 /** Image pour l'OCR : plus grande, en niveaux de gris et contraste étiré (étiquettes ternes, photos de loin). */
-export async function prepareForOcr(file: Blob, maxSide = 2400): Promise<Blob> {
+export async function prepareForOcr(file: Blob, maxSide = 2400, minSide = 1800): Promise<Blob> {
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) return file;
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const longest = Math.max(bitmap.width, bitmap.height);
+  // Une petite zone recadrée est agrandie (jusqu'à ×2) : Tesseract lit mieux des lettres d'une trentaine de pixels.
+  const scale = longest > maxSide ? maxSide / longest : Math.min(2, Math.max(1, minSide / longest));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
@@ -155,11 +157,26 @@ export async function ocrText(image: Blob, onProgress?: (ratio: number) => void)
     logger: (m: { status: string; progress: number }) => m.status === "recognizing text" && onProgress?.(m.progress),
   });
   try {
-    const { data } = await worker.recognize(image);
-    return data.text;
+    const first = (await worker.recognize(image)).data.text;
+    // Seconde passe en « texte épars » (PSM 11) : les étiquettes mêlent blocs, titres isolés et petites mentions.
+    await worker.setParameters({ tessedit_pageseg_mode: "11" as never });
+    const second = (await worker.recognize(image)).data.text;
+    return mergeOcr(first, second);
   } finally {
     await worker.terminate();
   }
+}
+
+/** Ajoute à la première lecture les lignes que seule la seconde a trouvées. */
+export function mergeOcr(first: string, second: string): string {
+  const seen = new Set(first.split("\n").map((l) => normalize(l)).filter(Boolean));
+  const extra = second.split("\n").filter((l) => {
+    const n = normalize(l);
+    if (n.length < 3 || seen.has(n)) return false;
+    seen.add(n);
+    return true;
+  });
+  return extra.length ? `${first.trimEnd()}\n${extra.join("\n")}` : first;
 }
 
 /** Fait interpréter par Claude un texte d'étiquette lu par OCR (bruité, coupé), quand la vue ne permet pas d'envoyer l'image. */
@@ -179,8 +196,27 @@ ${text.slice(0, 4000)}
 
 const PRODUCER = /^(chateau|ch\.|domaine|dom\.|clos|mas|maison|cave|cellier|vignobles?|champagne)\b/;
 
+const PARTICLES = new Set(["de", "du", "des", "la", "le", "les", "et", "d", "l", "en", "sur", "aux"]);
+
+/** « DOMAINE DU VIEUX TÉLÉGRAPHE » → « Domaine du Vieux Télégraphe ». */
 const titleCase = (s: string) =>
-  s === s.toUpperCase() ? s.toLowerCase().replace(/(^|[\s\-'’])(\p{L})/gu, (_, sep, c) => sep + c.toUpperCase()) : s;
+  s === s.toUpperCase()
+    ? s
+        .toLowerCase()
+        .replace(/(^|[\s\-'’])(\p{L}+)/gu, (_, sep: string, word: string) =>
+          sep + (sep && PARTICLES.has(word) ? word : word[0].toUpperCase() + word.slice(1)),
+        )
+    : s;
+
+/** La ligne suivante prolonge-t-elle le nom (suite en capitales, sans chiffres ni mention légale) ? */
+function continuesName(line: string, next: string | undefined): boolean {
+  if (!next || line !== line.toUpperCase() || next !== next.toUpperCase() || /\d/.test(next)) return false;
+  const n = normalize(next);
+  const words = n.split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 3 || n.length < 3) return false;
+  if (/\b(grand vin|appellation|controlee|mis en bouteille|rouge|blanc|rose|cru|vin de|produit|brut)\b/.test(n)) return false;
+  return !APPELLATIONS.some((a) => normalize(a.name) === n) && !REGIONS.some((r) => normalize(r) === n);
+}
 
 function detectFormat(t: string): string | undefined {
   if (/\b1[.,]5\s*l\b|\b150\s*cl\b|magnum/.test(t)) return "Magnum 1,5 L";
@@ -211,7 +247,10 @@ export function parseLabelText(raw: string, year = new Date().getFullYear()): La
 
   const at = lines.findIndex((l) => PRODUCER.test(normalize(l)) && normalize(l) !== "champagne");
   // Un nom coupé en fin de ligne (« CHÂTEAU LYNCH- » / « BAGES ») se poursuit sur la suivante.
-  const cut = at >= 0 && lines[at + 1] && (lines[at].endsWith("-") || /\b(de|du|des|de la|le|la|d')$/.test(normalize(lines[at])) || /\bd['’]$/i.test(lines[at]));
+  const cut =
+    at >= 0 &&
+    !!lines[at + 1] &&
+    (lines[at].endsWith("-") || /\b(de|du|des|de la|le|la|d')$/.test(normalize(lines[at])) || /\bd['’]$/i.test(lines[at]) || continuesName(lines[at], lines[at + 1]));
   const producerLine = at < 0 ? undefined : cut ? `${lines[at]}${lines[at].endsWith("-") || /['’]$/.test(lines[at]) ? "" : " "}${lines[at + 1]}` : lines[at];
   const producer = producerLine ? titleCase(producerLine).slice(0, 80) : undefined;
 
