@@ -31,6 +31,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [preview, setPreview] = useState<string>();
   const [dragging, setDragging] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const ctl = useRef<AbortController>(null);
   const reading = status.kind === "reading";
   const scanRef = useRef<(f: Blob) => void>(null);
@@ -109,7 +110,21 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
   }
   scanRef.current = scan;
 
+  // Quand le sélecteur s'ouvre, la page perd le focus. Sinon, l'app hôte l'a bloqué (app Claude sur Android).
+  const watchPicker = () => {
+    let opened = false;
+    const mark = () => (opened = true);
+    window.addEventListener("blur", mark);
+    document.addEventListener("visibilitychange", mark);
+    setTimeout(() => {
+      window.removeEventListener("blur", mark);
+      document.removeEventListener("visibilitychange", mark);
+      if (!opened) setBlocked(true);
+    }, 1500);
+  };
+
   const pick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setBlocked(false);
     const f = e.target.files?.[0];
     if (f) scan(f);
     e.target.value = "";
@@ -153,20 +168,17 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
               accept="image/*"
               disabled={reading}
               onChange={pick}
+              onClick={watchPicker}
               className="absolute inset-0 cursor-pointer opacity-0"
               aria-label="Photo de l'étiquette"
             />
           </label>
-          {/* Zone éditable : sur téléphone, un appui long y fait apparaître « Coller » pour une image. */}
-          <div
-            contentEditable={!reading}
-            suppressContentEditableWarning
-            role="textbox"
-            aria-label="Coller une photo de l'étiquette"
-            data-placeholder="Le bouton ne réagit pas ? Copie la photo depuis ta galerie, puis appui long ici → Coller."
-            onInput={(e) => (e.currentTarget.innerHTML = "")}
-            className="mt-2 min-h-9 rounded-lg border border-dashed border-stone-300 px-3 py-2 text-xs text-stone-500 caret-transparent outline-none empty:before:content-[attr(data-placeholder)] focus:border-wine-500 focus:bg-wine-50"
-          />
+          {blocked && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+              L'app Claude empêche cette page d'ouvrir l'appareil photo. Ouvre Ma Cave dans ton navigateur (Chrome, Safari) :
+              touche la flèche de partage en haut de l'écran, copie le lien et colle-le dans le navigateur, connecté à ton compte Claude.
+            </p>
+          )}
           {status.kind === "done" && (
             <p className="mt-2 text-sm text-emerald-700">
               {plural(status.filled, "champ rempli", "champs remplis")}, à vérifier ci-dessous.
