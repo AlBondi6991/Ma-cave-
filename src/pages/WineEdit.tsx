@@ -1,9 +1,11 @@
 import { ArrowLeft } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import LabelScanner from "../components/LabelScanner";
 import { Button, Card, Field, PageTitle, inputClass } from "../components/ui";
 import { addWine, newId, updateWine, type WineInput } from "../lib/cellar";
-import { COUNTRIES, GRAPES, REGIONS } from "../lib/catalog";
+import { APPELLATIONS, COUNTRIES, GRAPES, REGIONS, findAppellation } from "../lib/catalog";
+import type { LabelFields } from "../lib/labelScan";
 import { update, useCellar } from "../lib/store";
 import { COLORS, FORMATS, type Wine, type WineColor } from "../lib/types";
 
@@ -90,6 +92,31 @@ export default function WineEdit() {
   const set = <K extends keyof FormValues>(k: K) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  /** Reporte dans le formulaire ce que le scan a lu ; renvoie le nombre de champs remplis. */
+  function applyScan(fields: LabelFields): number {
+    const patch: Partial<FormValues> = {};
+    for (const [k, v] of Object.entries(fields) as [keyof LabelFields, LabelFields[keyof LabelFields]][]) {
+      if (v == null) continue;
+      if (k === "color") patch.color = v as FormValues["color"];
+      else patch[k] = Array.isArray(v) ? v.join(", ") : String(v);
+    }
+    const known = findAppellation(fields.appellation);
+    if (known && !fields.region) patch.region = known.region;
+    setForm((f) => ({ ...f, ...patch }));
+    setError(undefined);
+    return Object.keys(patch).length;
+  }
+
+  function setAppellation(e: { target: { value: string } }) {
+    const value = e.target.value;
+    const known = findAppellation(value);
+    setForm((f) => ({
+      ...f,
+      appellation: value,
+      region: f.region || !known ? f.region : known.region,
+    }));
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault();
     const err = validate(form);
@@ -112,11 +139,13 @@ export default function WineEdit() {
       </Link>
       <PageTitle title={existing ? "Modifier le vin" : "Ajouter un vin"} />
 
+      {!existing && <LabelScanner onRead={applyScan} />}
+
       <Card className="space-y-4">
         <h2 className="font-serif text-lg font-semibold">Le vin</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Domaine / Château *">
-            <input className={inputClass} value={form.producer} onChange={set("producer")} placeholder="Château Montrose" autoFocus={!existing} />
+            <input className={inputClass} value={form.producer} onChange={set("producer")} placeholder="Château Montrose" />
           </Field>
           <Field label="Cuvée">
             <input className={inputClass} value={form.name} onChange={set("name")} placeholder="Grand vin" />
@@ -156,7 +185,7 @@ export default function WineEdit() {
             <input className={inputClass} list="regions" value={form.region} onChange={set("region")} placeholder="Bordeaux" />
           </Field>
           <Field label="Appellation">
-            <input className={inputClass} value={form.appellation} onChange={set("appellation")} placeholder="Saint-Estèphe" />
+            <input className={inputClass} list="appellations" value={form.appellation} onChange={setAppellation} placeholder="Saint-Estèphe" />
           </Field>
         </div>
         <Field label="Cépages" hint="Séparés par des virgules.">
@@ -217,6 +246,7 @@ export default function WineEdit() {
 
       <datalist id="regions">{REGIONS.map((r) => <option key={r} value={r} />)}</datalist>
       <datalist id="countries">{COUNTRIES.map((r) => <option key={r} value={r} />)}</datalist>
+      <datalist id="appellations">{APPELLATIONS.map((a) => <option key={a.name} value={a.name} />)}</datalist>
       <datalist id="grapes">{GRAPES.map((r) => <option key={r} value={r} />)}</datalist>
     </form>
   );

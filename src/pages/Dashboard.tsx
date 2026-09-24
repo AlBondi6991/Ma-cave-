@@ -1,4 +1,4 @@
-import { AlertTriangle, Grid3x3, Plus, Sparkles, Wine as WineIcon } from "lucide-react";
+import { AlertTriangle, ChevronRight, Grid3x3, Plus, Sparkles, UtensilsCrossed, Wine as WineIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import WineRow from "../components/WineRow";
 import { Button, Card, ColorDot, EmptyState, PageTitle, Stat } from "../components/ui";
@@ -77,6 +77,15 @@ export default function Dashboard() {
           <div className="space-y-2">{drinkNow.slice(0, 5).map(({ wine }) => <WineRow key={wine.id} wine={wine} />)}</div>
         )}
       </section>
+
+      <Link to="/accords" className="flex items-center gap-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-stone-200/70 hover:ring-wine-200">
+        <UtensilsCrossed className="shrink-0 text-wine-600" size={22} />
+        <span className="min-w-0 flex-1">
+          <span className="block font-serif text-lg font-semibold text-wine-900">Que boire ce soir ?</span>
+          <span className="block text-sm text-stone-500">Dis ce que tu manges, je trouve la bouteille dans ta cave.</span>
+        </span>
+        <ChevronRight className="shrink-0 text-stone-400" size={20} />
+      </Link>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>

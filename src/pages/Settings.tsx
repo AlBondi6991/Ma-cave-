@@ -1,11 +1,14 @@
-import { Download, RotateCcw, Sparkles, Upload } from "lucide-react";
+import { Download, RotateCcw, Smartphone, Sparkles, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ask } from "../components/Confirm";
 import { Button, Card, PageTitle } from "../components/ui";
 import { emptyState, parseBackup, today } from "../lib/cellar";
 import { demoState } from "../lib/demo";
 import { plural } from "../lib/format";
+import { saveFile } from "../lib/claude";
 import { setState, useCellar } from "../lib/store";
+import { isEmbedded, isIos, isStandalone, useInstallPrompt } from "../pwa";
 
 export default function SettingsPage() {
   const state = useCellar();
@@ -14,18 +17,15 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const empty = state.wines.length === 0 && state.racks.length === 0;
 
-  function exportData() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = Object.assign(document.createElement("a"), { href: url, download: `ma-cave-${today()}.json` });
-    a.click();
-    URL.revokeObjectURL(url);
+  async function exportData() {
+    const ok = await saveFile(`ma-cave-${today()}.json`, JSON.stringify(state, null, 2), "application/json");
+    if (!ok) setMessage({ ok: false, text: "L'export n'a pas abouti." });
   }
 
   async function importData(file: File) {
     try {
       const next = parseBackup(await file.text());
-      if (!empty && !confirm("Remplacer toute ta cave actuelle par cette sauvegarde ?")) return;
+      if (!empty && !(await ask("Remplacer toute ta cave actuelle par cette sauvegarde ?", "Remplacer"))) return;
       setState(next);
       setMessage({ ok: true, text: `Sauvegarde importée : ${plural(next.wines.length, "vin")}.` });
     } catch (e) {
@@ -36,6 +36,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-4">
       <PageTitle title="Réglages" />
+
+      <InstallCard />
 
       <Card>
         <h2 className="font-serif text-lg font-semibold">Sauvegarde</h2>
@@ -71,8 +73,8 @@ export default function SettingsPage() {
         <Button
           className="mt-3"
           variant="secondary"
-          onClick={() => {
-            if (!empty && !confirm("Remplacer ta cave actuelle par la cave d'exemple ?")) return;
+          onClick={async () => {
+            if (!empty && !(await ask("Remplacer ta cave actuelle par la cave d'exemple ?", "Remplacer"))) return;
             setState(demoState());
             navigate("/");
           }}
@@ -88,11 +90,46 @@ export default function SettingsPage() {
           className="mt-3"
           variant="danger"
           disabled={empty}
-          onClick={() => confirm("Tout effacer ? Pense à exporter une sauvegarde avant.") && setState(emptyState())}
+          onClick={async () => (await ask("Tout effacer ? Pense à exporter une sauvegarde avant.", "Tout effacer")) && setState(emptyState())}
         >
           <RotateCcw size={16} /> Tout effacer
         </Button>
       </Card>
     </div>
+  );
+}
+
+function InstallCard() {
+  const { canPrompt, install } = useInstallPrompt();
+  let body;
+  if (isStandalone()) body = <p className="mt-1 text-sm text-stone-600">Ma Cave est installée sur cet appareil.</p>;
+  else if (isEmbedded())
+    body = (
+      <p className="mt-1 text-sm text-stone-600">
+        Tu utilises Ma Cave dans claude.ai. Pour l'avoir en icône sur l'écran d'accueil, ouvre la version hébergée de l'app,
+        puis reviens ici.
+      </p>
+    );
+  else if (canPrompt)
+    body = (
+      <>
+        <p className="mt-1 text-sm text-stone-600">Ajoute Ma Cave à l'écran d'accueil : elle s'ouvre comme une app, même hors connexion.</p>
+        <Button className="mt-3" onClick={install}><Smartphone size={16} /> Installer Ma Cave</Button>
+      </>
+    );
+  else
+    body = (
+      <p className="mt-1 text-sm text-stone-600">
+        {isIos()
+          ? "Dans Safari, touche le bouton Partager puis « Sur l'écran d'accueil »."
+          : "Dans le menu du navigateur, choisis « Installer l'application » ou « Ajouter à l'écran d'accueil »."}{" "}
+        Ma Cave s'ouvrira comme une app, même hors connexion.
+      </p>
+    );
+  return (
+    <Card>
+      <h2 className="font-serif text-lg font-semibold">Installer l'app</h2>
+      {body}
+    </Card>
   );
 }

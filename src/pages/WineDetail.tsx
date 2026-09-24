@@ -1,10 +1,12 @@
-import { ArrowLeft, Grid3x3, Minus, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Grid3x3, Minus, NotebookPen, Pencil, Plus, Trash2, UtensilsCrossed } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ask } from "../components/Confirm";
 import { AddBottlesDialog, RemoveBottleDialog, TastingDialog } from "../components/StockDialogs";
 import { Button, Card, ColorDot, Rating, StatusBadge } from "../components/ui";
 import { deleteTasting, deleteWine, slotsOf } from "../lib/cellar";
 import { formatDate, formatEuro, plural, slotLabel } from "../lib/format";
+import { dishesForWine } from "../lib/pairing";
 import { averageRating, bottleValue } from "../lib/stats";
 import { drinkStatus } from "../lib/status";
 import { update, useCellar } from "../lib/store";
@@ -32,9 +34,10 @@ export default function WineDetail() {
   const avg = averageRating(state, wine.id);
   const value = bottleValue(wine);
   const color = COLORS.find((c) => c.value === wine.color)!;
+  const dishes = dishesForWine(wine);
 
-  function remove() {
-    if (!confirm(`Supprimer « ${wine!.producer} » et tout son historique ?`)) return;
+  async function remove() {
+    if (!(await ask(`Supprimer « ${wine!.producer} » et tout son historique ?`, "Supprimer"))) return;
     update(deleteWine, wine!.id);
     navigate("/vins", { replace: true });
   }
@@ -116,6 +119,16 @@ export default function WineDetail() {
             <Info label="Acheté le" value={wine.purchaseDate ? formatDate(wine.purchaseDate) : undefined} />
             <Info label="Fournisseur" value={wine.supplier} />
           </dl>
+          {dishes.length > 0 && (
+            <div className="mt-4 border-t border-stone-100 pt-3 text-sm">
+              <div className="mb-1.5 flex items-center gap-1.5 font-medium text-stone-700"><UtensilsCrossed size={15} /> À table avec</div>
+              <div className="flex flex-wrap gap-1.5">
+                {dishes.map((d) => (
+                  <Link key={d.id} to={`/accords?plat=${d.id}`} className="rounded-md bg-stone-100 px-2 py-0.5 text-stone-700 hover:bg-wine-50">{d.label}</Link>
+                ))}
+              </div>
+            </div>
+          )}
           {wine.notes && <p className="mt-3 whitespace-pre-line rounded-lg bg-stone-50 p-2.5 text-sm text-stone-700">{wine.notes}</p>}
         </Card>
       </div>
@@ -138,7 +151,7 @@ export default function WineDetail() {
                   <button
                     className="text-stone-400 hover:text-red-600"
                     aria-label="Supprimer la note"
-                    onClick={() => confirm("Supprimer cette note ?") && update(deleteTasting, t.id)}
+                    onClick={async () => (await ask("Supprimer cette note de dégustation ?", "Supprimer")) && update(deleteTasting, t.id)}
                   >
                     <Trash2 size={15} />
                   </button>

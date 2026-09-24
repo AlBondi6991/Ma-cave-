@@ -1,6 +1,7 @@
 import { ArrowRightLeft, Grid3x3, Pencil, Plus, Trash2, Wine as WineIcon, X } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { ask } from "../components/Confirm";
 import { RemoveBottleDialog } from "../components/StockDialogs";
 import { Button, Card, ColorDot, EmptyState, Field, Modal, PageTitle, StatusBadge, inputClass } from "../components/ui";
 import {
@@ -299,8 +300,8 @@ function RackDialog({ rack, onClose, onCreated }: { rack?: Rack; onClose: () => 
         {rack ? (
           <Button
             variant="danger"
-            onClick={() => {
-              if (!confirm(`Supprimer « ${rack.name} » ? Les bouteilles restent en stock, hors casier.`)) return;
+            onClick={async () => {
+              if (!(await ask(`Supprimer « ${rack.name} » ? Les bouteilles restent en stock, hors casier.`, "Supprimer"))) return;
               update(deleteRack, rack.id);
               onClose();
             }}
