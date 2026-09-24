@@ -21,8 +21,21 @@ export function registerServiceWorker() {
     notify();
   });
   if (!import.meta.env.PROD || !("serviceWorker" in navigator) || window.claude || window.self !== window.top) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
+  // Nouvelle version publiée : le nouveau service worker prend la main, on recharge une fois pour l'afficher.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+  window.addEventListener("load", async () => {
+    const reg = await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: "none" }).catch(() => null);
+    if (!reg) return;
+    // Une app installée reste souvent ouverte en arrière-plan : on revérifie à chaque retour au premier plan.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    });
   });
 }
 

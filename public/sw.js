@@ -1,5 +1,5 @@
 // Service worker de Ma Cave : l'app s'ouvre hors connexion une fois visitée.
-const CACHE = "ma-cave-v1";
+const CACHE = "ma-cave-__BUILD_ID__"; // remplacé à chaque build : le navigateur voit une nouvelle version
 const SHELL = ["./", "./index.html", "./favicon.svg", "./manifest.webmanifest", "./icons/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -22,7 +22,8 @@ async function cacheFirst(request) {
 
 async function networkFirst(request, fallback) {
   try {
-    const res = await fetch(request);
+    // « no-cache » : revalide auprès du serveur au lieu de resservir la copie HTTP (10 min sur GitHub Pages).
+    const res = await fetch(request, { cache: "no-cache" });
     if (res.ok) (await caches.open(CACHE)).put(fallback ?? request, res.clone());
     return res;
   } catch {

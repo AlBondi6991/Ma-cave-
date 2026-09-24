@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
@@ -31,7 +31,28 @@ function ocrAssets(): Plugin {
   };
 }
 
+const BUILD_DATE = new Date().toISOString();
+
+/** Estampille sw.js pour que chaque publication soit vue comme une mise à jour par les téléphones. */
+function stampServiceWorker(): Plugin {
+  let outDir = "dist";
+  return {
+    name: "stamp-sw",
+    apply: "build",
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
+    closeBundle() {
+      const file = join(import.meta.dirname, outDir, "sw.js");
+      writeFileSync(file, readFileSync(file, "utf8").replace("__BUILD_ID__", BUILD_DATE));
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [react(), tailwindcss(), ocrAssets()],
+  define: {
+    __BUILD_DATE__: JSON.stringify(BUILD_DATE),
+  },
+  plugins: [react(), tailwindcss(), ocrAssets(), stampServiceWorker()],
 });

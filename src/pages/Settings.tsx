@@ -97,6 +97,9 @@ export default function SettingsPage() {
           <RotateCcw size={16} /> Tout effacer
         </Button>
       </Card>
+      <p className="px-1 text-center text-xs text-stone-400">
+        Version du {new Date(__BUILD_DATE__).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}
+      </p>
     </div>
   );
 }
