@@ -23,10 +23,10 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
-  // Coller une photo copiée (utile quand le sélecteur de fichiers est indisponible).
+  // Coller une photo copiée : seule voie quand la vue (app Claude sur téléphone) n'ouvre pas le sélecteur de fichiers.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const file = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+      const file = imageFrom(e.clipboardData);
       if (!file) return;
       e.preventDefault();
       scanRef.current?.(file);
@@ -78,7 +78,7 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/"));
+          const f = imageFrom(e.dataTransfer);
           if (f) scan(f);
         }}
       >
@@ -113,7 +113,16 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
               aria-label="Photo de l'étiquette"
             />
           </label>
-          <p className="mt-1.5 text-xs text-stone-400">Tu peux aussi coller ou glisser une photo ici.</p>
+          {/* Zone éditable : sur téléphone, un appui long y fait apparaître « Coller » pour une image. */}
+          <div
+            contentEditable={!reading}
+            suppressContentEditableWarning
+            role="textbox"
+            aria-label="Coller une photo de l'étiquette"
+            data-placeholder="Le bouton ne réagit pas ? Copie la photo depuis ta galerie, puis appui long ici → Coller."
+            onInput={(e) => (e.currentTarget.innerHTML = "")}
+            className="mt-2 min-h-9 rounded-lg border border-dashed border-stone-300 px-3 py-2 text-xs text-stone-500 caret-transparent outline-none empty:before:content-[attr(data-placeholder)] focus:border-wine-500 focus:bg-wine-50"
+          />
           {status.kind === "done" && (
             <p className="mt-2 text-sm text-emerald-700">{plural(status.filled, "champ rempli", "champs remplis")}, à vérifier ci-dessous.</p>
           )}
@@ -122,4 +131,12 @@ export default function LabelScanner({ onRead }: { onRead: (fields: LabelFields)
       </div>
     </Card>
   );
+}
+
+function imageFrom(data: DataTransfer | null): File | undefined {
+  if (!data) return;
+  const direct = [...data.files].find((f) => f.type.startsWith("image/"));
+  if (direct) return direct;
+  const item = [...data.items].find((i) => i.kind === "file" && i.type.startsWith("image/"));
+  return item?.getAsFile() ?? undefined;
 }
