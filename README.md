@@ -16,6 +16,12 @@ Application de gestion de cave à vins, dans l'esprit d'Oeni.
 
 Les données sont stockées localement dans le navigateur (`localStorage`).
 
+## Mise en ligne
+
+Chaque envoi sur `main` teste, compile et publie l'app sur GitHub Pages (`.github/workflows/deploy.yml`) :
+https://albondi6991.github.io/Ma-cave-/ — à ouvrir sur le téléphone puis « Ajouter à l'écran d'accueil ».
+Une fois installée, l'app se met à jour toute seule à l'ouverture suivante.
+
 ## Développement
 
 ```bash
